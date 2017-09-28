@@ -139,13 +139,14 @@
   <ItemGroup>
     <ClInclude Include="ArchAbstract.h" />
     <ClInclude Include="Crypto.h" />
+    <ClInclude Include="Net.h" />
     <ClInclude Include="Tools.h" />
     <ClInclude Include="Support.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Crypto.cpp" />
+    <ClCompile Include="Net.cpp" />
     <ClCompile Include="Support.cpp" />
-    <ClCompile Include="Test.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

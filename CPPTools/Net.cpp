@@ -185,11 +185,11 @@ namespace IO {
 	}
 	bool NetClient::isEncrypted() { return encrypted; }
 	void NetClient::update() {
-		if (!connected(_socket)) {
+		/*if (!connected(_socket)) { // Check this later...
 			_open = false;
 			close();
 			return;
-		}
+		}*/
 		int iResult = 0, rdErr;
 		unsigned long rCount;
 		rdErr = ioctlsocket(_socket, FIONREAD, &rCount);

@@ -154,11 +154,11 @@ namespace IO {
 		}
 		if (!canWrite) return false;
 		char* msg = encrypted ? Crypto::full_auto_encrypt(message, size, pK, &size) : (char*)message;
-		_write(msg, size);
+		_write(msg, size + encrypted);
 		if (encrypted) delete[] msg;
 		return true;
 	}
-	bool NetClient::write(char* message) { return write(message, strlen(message)); }
+	bool NetClient::write(char* message) { return write(message, strlen(message)+1); } // Send together with the null-terminator
 	bool NetClient::writeBufferedPackets() {
 		for (size_t t = 0; t < outPacketBuf->size(); ++t) if (!write(outPacketBuf->at(t).message, outPacketBuf->at(t).size)) { delete outPacketBuf; return false; };
 		delete outPacketBuf;

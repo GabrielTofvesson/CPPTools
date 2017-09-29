@@ -1,4 +1,5 @@
 #include "Net.h"
+#include "Support.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -7,21 +8,6 @@
 #include <ws2tcpip.h>
 
 namespace IO {
-
-	bool connected(SOCKET sock)
-	{
-		char buf;
-		int err = recv(sock, &buf, 1, MSG_PEEK);
-		if (err == SOCKET_ERROR)
-		{
-			if (WSAGetLastError() != WSAEWOULDBLOCK)
-			{
-				return false;
-			}
-		}
-		return true;
-	}
-
 	bool cryptoLevelsAreCompatible(CryptoLevel l1, CryptoLevel l2) {
 		return !(((l1 == CryptoLevel::None) && (l2 == CryptoLevel::Force)) || ((l2 == CryptoLevel::None) && (l1 == CryptoLevel::Force)));
 	}
@@ -34,8 +20,20 @@ namespace IO {
 		return c;
 	}
 
+	void flushPrecedingPings(std::vector<char>* sparse) {
+		while (sparse->size() >= sizeof(ulong_64b)) {
+			ulong_64b size = 0;
+			char* c = readSparse(sparse, sizeof(ulong_64b), false);
+			memcpy(&size, c, sizeof(ulong_64b));
+			delete[] c;
+			if (size != FLAG_PING) return;
+			else delete[] readSparse(sparse, sizeof(ulong_64b)); // If this block is a ping packet, remove it
+		}
+	}
+
 	bool hasFullMessage(std::vector<char> *sparse) {
 		if (sparse->size() < sizeof(ulong_64b)) return false;
+		flushPrecedingPings(sparse);
 		ulong_64b size = 0;
 		char* c = readSparse(sparse, sizeof(ulong_64b), false);
 		memcpy(&size, c, sizeof(ulong_64b));
@@ -54,6 +52,7 @@ namespace IO {
 		canWrite = true;
 		evt = nullptr;
 		char cryptoPref = static_cast<char>(preferEncrypted);
+		commTime = time(nullptr);
 		if (send(_socket, &cryptoPref, 1, 0) == SOCKET_ERROR) throw new _exception(); // Cannot establish connection :(
 		if (!noThread) listener = std::thread([](NetClient& cli) { while (cli._open) { cli.update(); Sleep(25); } }, std::ref(*this)); // Setup separate thread for reading new data
 	}
@@ -130,7 +129,22 @@ namespace IO {
 		shutdown(_socket, SD_SEND);
 		canWrite = false;
 	}
+	bool NetClient::ping() {
+		int i;
+		char* c = new char[sizeof(ulong_64b)];
+		ulong_64b pingValue = FLAG_PING;
+		memcpy(c, (const char*)&pingValue, sizeof(ulong_64b));
+		for (ulong_64b wIdx = 0; wIdx < sizeof(ulong_64b); ++wIdx) {
+			if ((i = send(_socket, c + wIdx, 1, 0)) == SOCKET_ERROR) return false;
+			else if (i == 0) --wIdx;
+		}
+		commTime = time(nullptr);
+	}
+
+	size_t NetClient::getBOPCount() { return firstMessage ? outPacketBuf->size() : 0; }
+
 	bool NetClient::_write(char* message, ulong_64b size) {
+		if (size==FLAG_PING) throw new _exception();	   // Max value is reserved for ping packet
 		int i;
 		char* c = new char[sizeof(ulong_64b)];
 		memcpy(c, &size, sizeof(ulong_64b));
@@ -142,6 +156,7 @@ namespace IO {
 			if ((i = send(_socket, message + wIdx, 1, 0)) == SOCKET_ERROR) return false;
 			else if (i == 0) --wIdx;
 		}
+		commTime = time(nullptr);
 		return true;
 	}
 	bool NetClient::write(void* message, ulong_64b size) {
@@ -153,9 +168,15 @@ namespace IO {
 			return true;
 		}
 		if (!canWrite) return false;
-		char* msg = encrypted ? Crypto::full_auto_encrypt(message, size, pK, &size) : (char*)message;
-		_write(msg, size + encrypted);
+		char* bMsg = new char[size+1];
+		bMsg[0] = remotePUID;
+		++remotePUID;
+		memcpy(bMsg + 1, message, size);
+		++size;
+		char* msg = encrypted ? Crypto::full_auto_encrypt(bMsg, size, pK, &size) : (char*)bMsg;
+		_write(msg, size);
 		if (encrypted) delete[] msg;
+		delete[] bMsg;
 		return true;
 	}
 	bool NetClient::write(char* message) { return write(message, strlen(message)+1); } // Send together with the null-terminator
@@ -185,11 +206,6 @@ namespace IO {
 	}
 	bool NetClient::isEncrypted() { return encrypted; }
 	void NetClient::update() {
-		/*if (!connected(_socket)) { // Check this later...
-			_open = false;
-			close();
-			return;
-		}*/
 		int iResult = 0, rdErr;
 		unsigned long rCount;
 		rdErr = ioctlsocket(_socket, FIONREAD, &rCount);
@@ -200,14 +216,30 @@ namespace IO {
 				for (int i = 0; i < iResult; ++i)
 					if (sparse->size() < BUF_2_MAX)
 						sparse->push_back(rBuf[i]); // Drop anything over the absolute max
+			commTime = time(nullptr);
+			if(!firstMessage) flushPrecedingPings(sparse);
 		}
 		while (!firstMessage && hasFullMessage(sparse)) {
 			Packet p;
+
 			char* size = readSparse(sparse, sizeof(ulong_64b));
 			memcpy(&p.size, size, sizeof(ulong_64b));
 			delete[] size;
+
 			p.message = readSparse(sparse, p.size);
 			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, keys.privKey, &p.size);
+
+			p.packetUID = p.message[0];
+			if (p.packetUID != expectedNextPUID) continue; // Detect packet replay/mismatch
+			else ++expectedNextPUID;
+
+			--p.size;
+
+			char* c = new char[p.size];
+			memcpy(c, p.message + 1, p.size);
+			delete[] p.message;
+			p.message = c;
+
 			if (evt == nullptr) packets->push_back(p);
 			else evt(this, p); // Notify event handler of a new packet
 		}
@@ -258,6 +290,7 @@ namespace IO {
 			_open = false;
 			close();
 		}
+		if ((time(nullptr) - commTime) > 1) if (!ping()) { _open = false; close(); }
 	}
 	bool NetClient::isOpen() { return _open; }
 

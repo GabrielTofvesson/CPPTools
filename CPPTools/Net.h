@@ -14,6 +14,9 @@
 
 #define WIN32_LEAN_AND_MEAN
 
+// Ping flag tells the recieving host to drop the current ulong_64b, as it is sent to check if the connection is still alive
+#define FLAG_PING (ulong_64b)-1
+
 #include "Crypto.h"
 #include "ArchAbstract.h"
 
@@ -29,6 +32,7 @@ namespace IO {
 
 	struct Packet {
 		ulong_64b size;
+		char packetUID;
 		char* message;
 	};
 
@@ -48,6 +52,8 @@ namespace IO {
 		bool fm_neg_hasLevel = false;
 		bool fm_neg_hasSize = false;
 		bool startNegotiate = false;
+		char expectedNextPUID = 0;
+		char remotePUID = 0;
 		std::vector<char>* sparse;
 		std::vector<Packet>* outPacketBuf;
 		Crypto::RSA::KeyData keys;				// Client's keysets (if using encryption)
@@ -59,6 +65,7 @@ namespace IO {
 		bool _write(char*, ulong_64b);			// Internal write function. Doesn't do any of the fancy auto encryption: just raw write...
 		bool writeBufferedPackets();			// Flushes and deletes buffer
 		void update();							// Read incoming data and store in buffers
+		bool ping();							// Check if connection is alive by pinging remote host
 	protected:
 		std::thread listener;					// Incoming data listener (optional)
 		SOCKET _socket;							// Underlying socket used for communication

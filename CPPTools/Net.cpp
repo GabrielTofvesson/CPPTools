@@ -8,6 +8,166 @@
 #include <ws2tcpip.h>
 
 namespace IO {
+
+	char* __cdecl copy(char* data, ulong_64b size) { // Convenience function for copying data
+		char* c = new char[size];
+		memcpy(c, data, size);
+		return c;
+	}
+
+	NetPacketBuilder::NetPacketBuilder(char PUID, ulong_64b sparseSize) :
+		sparseSize(sparseSize<2?BUFSIZE:sparseSize),
+		sparse(false),
+		hasBuilt(false),
+		_build(new NetPacket(PUID))
+	{
+
+	}
+	NetPacketBuilder::~NetPacketBuilder() {
+		if (!hasBuilt) delete[] _build;
+	}
+
+	ulong_64b NetPacketBuilder::size() { return _build->size; }
+
+	NetPacketBuilder& NetPacketBuilder::append(char datum) { return append(&datum, 1); }
+	NetPacketBuilder& NetPacketBuilder::append(char *data, ulong_64b size) {
+		if (!sparse && ((_build->size + size) > sparseSize)) {
+			SparseNetPacket* snp = new SparseNetPacket(_build->size, _build->PUID, _build->size, _build->message, sparseSize);
+			delete _build;
+			_build = snp;
+		}
+		_build->write(data, size);
+		return *this;
+	}
+	NetPacketBuilder& NetPacketBuilder::append(char *data) { return append(data, strlen(data)); }
+	NetPacket* NetPacketBuilder::build() { hasBuilt = true;  return _build; }
+
+
+
+	NetPacket::NetPacket(char PUID) : _size(0), size(_size), PUID(PUID) {}
+
+	NetPacket::NetPacket(ulong_64b size, char PUID, char *msg) : _size(size), size(_size), PUID(PUID) {
+		// Copy message to protected field (not reference)
+		this->message = copy(msg, size);
+	}
+
+	NetPacket::NetPacket(ulong_64b &size, char PUID, ulong_64b sparseSize, char* msg) : _size(sparseSize), size(size), PUID(PUID) {
+		this->message = copy(msg, sparseSize);
+	}
+
+	NetPacket::~NetPacket() {
+		delete[] message;
+	}
+
+	void NetPacket::write(char* toWrite, ulong_64b writeCount) {
+		char* newMsg = new char[_size + writeCount];
+		memcpy(newMsg, message, _size);
+		delete[] message;
+		memcpy(newMsg + _size, toWrite, writeCount);
+		message = newMsg;
+		_size += writeCount;
+	}
+	void NetPacket::write(char toWrite) { write(&toWrite, 1); }
+
+	// Copies a subset of the full message and returns to caller: starting at index "startIndex" of message and ending at index "startIndex + readCount"
+	char* __cdecl NetPacket::read(ulong_64b readCount, ulong_64b startIndex) {
+		if ((readCount + startIndex) > _size) throw new std::exception("Read index out of bounds for start index "+startIndex);
+		char* read = new char[readCount];
+		memcpy(read, message+startIndex, readCount);
+		return read;
+	}
+	// Copies "readCount" chars from message starting at index 0
+	char* __cdecl NetPacket::read(ulong_64b readCount) { return read(readCount, 0); }
+
+	// Returns a copy of the entire message
+	char* __cdecl NetPacket::copyMessage() { return read(_size); }
+
+
+
+	SparseNetPacket::SparseNetPacket(ulong_64b size, char PUID, ulong_64b sparseSize, char* message, ulong_64b maxPerPacket) :
+		NetPacket(size, PUID, sparseSize, message+(size-sparseSize)),	// Base constructor
+		maxPerPacket(maxPerPacket),										// Set max sparse packet size
+		sparseCount((size - (size%maxPerPacket)) / maxPerPacket),		// Set current amount of sparse packets
+		sparseSize(size)
+	{
+		sparseFull = new char*[sparseCount];
+		for (ulong_64b b = 0; b < sparseCount; ++b) sparseFull[b] = copy(message + (b*maxPerPacket), maxPerPacket); // Split given message into sparse blocks
+	}
+	SparseNetPacket::SparseNetPacket(char PUID, ulong_64b maxPerPacket) : SparseNetPacket(0, PUID, 0, nullptr, maxPerPacket) {}
+
+
+
+	SparseNetPacket::~SparseNetPacket() {
+		for (ulong_64b b = 0; b < sparseCount; ++b) delete[] sparseFull[b];
+		delete[] sparseFull;
+	}
+
+	void SparseNetPacket::write(char* toWrite, ulong_64b writeCount) {
+		ulong_64b actualWriteCount = maxPerPacket - _size;
+
+		if (writeCount >= actualWriteCount) {
+
+
+			char** c = new char*[++sparseCount];
+			memcpy(c, sparseFull, sizeof(sparseFull)*(sparseCount - 1));
+			delete[] sparseFull;
+			sparseFull = c;
+
+
+			sparseFull[sparseCount - 1] = new char[maxPerPacket];
+			memcpy(sparseFull[sparseCount - 1], message, _size);
+			memcpy(sparseFull[sparseCount - 1] + _size, toWrite, actualWriteCount);
+			delete[] message;
+
+			_size = 0;
+			message = new char[0];
+			write(toWrite+actualWriteCount, writeCount-actualWriteCount);
+			sparseSize += actualWriteCount;
+		}
+		else {
+			char* msg = new char[_size+writeCount];
+			memcpy(msg, message, _size);
+			memcpy(msg + _size, toWrite, writeCount);
+			delete[] message;
+			message = msg;
+			sparseSize += writeCount;
+			_size = writeCount;
+		}
+	}
+	void SparseNetPacket::write(char toWrite) { write(&toWrite, 1); }
+
+	char* __cdecl SparseNetPacket::read(ulong_64b readCount, ulong_64b startIndex) {
+		if ((readCount + startIndex) > sparseSize) throw new std::exception("Index out of bounds!");
+		char* read = new char[readCount];
+
+
+		// Get the first sparse packet to read from
+		ulong_64b sparseIdx = (startIndex - (startIndex%maxPerPacket)) / maxPerPacket;
+
+		// Adjust read index to be within bounds of the packet we will read from
+		startIndex = startIndex%maxPerPacket;
+
+		if ((sparseIdx > sparseCount) || ((sparseIdx == sparseCount) && startIndex >= _size))					// Make sure we're reading a valid range of data
+			throw new std::exception("Index out of bounds!");
+
+		ulong_64b count = 0;
+		while (count < readCount) {
+			ulong_64b rc = min(readCount - count, maxPerPacket - startIndex);									// Calculate amount of bytes to read by assessing whether or not we can read the entire packet or not
+			memcpy(read + count, ((sparseIdx<sparseCount)?sparseFull[sparseIdx++]:message) + startIndex, rc);	// Check if we're reading from the last packet (partially populated, non-sparse message) or not
+			if (startIndex != 0) startIndex = 0;																// If-statement to help with processor cache prediction: basically optimize away this statement after first call
+			count += rc;																						// Increment read count
+		}
+
+		return read;
+	}
+
+	// Returns a copy of the entire message
+	char* __cdecl SparseNetPacket::copyMessage() { return read(sparseSize, 0); }
+
+
+
+
+
 	bool cryptoLevelsAreCompatible(CryptoLevel l1, CryptoLevel l2) {
 		return !(((l1 == CryptoLevel::None) && (l2 == CryptoLevel::Force)) || ((l2 == CryptoLevel::None) && (l1 == CryptoLevel::Force)));
 	}
@@ -41,8 +201,6 @@ namespace IO {
 		return sparse->size() >= (size + sizeof(ulong_64b));
 	}
 
-
-
 	void NetClient::sharedSetup() {
 		if (preferEncrypted != CryptoLevel::None) keys = Crypto::RSA::rsa_gen_keys();
 		packets = new std::vector<Packet>();
@@ -56,6 +214,7 @@ namespace IO {
 		if (send(_socket, &cryptoPref, 1, 0) == SOCKET_ERROR) throw new _exception(); // Cannot establish connection :(
 		if (!noThread) listener = std::thread([](NetClient& cli) { while (cli._open) { cli.update(); Sleep(25); } }, std::ref(*this)); // Setup separate thread for reading new data
 	}
+
 	NetClient::NetClient(char* ipAddr, char* port, CryptoLevel preferEncrypted) :
 		commTime(time(nullptr)), preferEncrypted(preferEncrypted), startNegotiate(false)
 	{
@@ -139,6 +298,7 @@ namespace IO {
 			else if (i == 0) --wIdx;
 		}
 		commTime = time(nullptr);
+		return true;
 	}
 
 	size_t NetClient::getBOPCount() { return firstMessage ? outPacketBuf->size() : 0; }
@@ -210,10 +370,18 @@ namespace IO {
 		unsigned long rCount;
 		rdErr = ioctlsocket(_socket, FIONREAD, &rCount);
 		if (rdErr == SOCKET_ERROR) throw new _exception(); // Error using socket :(
-		if (rCount > 0) {
+		if ((builder==nullptr && (rCount >= 4)) || ((builder != nullptr) && (rCount > 0))) {
 			iResult = recv(_socket, rBuf, BUFSIZE, 0);
+			int offset = 0;
+
+			// TODO: Implement properly
+			if (builder == nullptr) {
+				builder = new NetPacketBuilder(0);
+				expect = *(ulong_64b*)rBuf;
+				offset = 4;
+			}
 			if (iResult > 0)
-				for (int i = 0; i < iResult; ++i)
+				for (int i = offset; i < iResult; ++i)
 					if (sparse->size() < BUF_2_MAX)
 						sparse->push_back(rBuf[i]); // Drop anything over the absolute max
 			commTime = time(nullptr);

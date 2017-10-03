@@ -30,105 +30,13 @@ namespace IO {
 
 	enum CryptoLevel { None, Prefer, Force };
 
-	class NetServer;
-	class NetClient;
-	class NetPacket;
-	class SparseNetPacket;
-
-	class NetPacketBuilder {
-	protected:
-		bool sparse, hasBuilt;
-		NetPacket* _build;
-		const ulong_64b sparseSize;
-
-	public:
-		NetPacketBuilder(char PUID, ulong_64b sparseSize = BUFSIZE);			// Auto-generate target size
-		virtual ~NetPacketBuilder();											// Destructor. Should remove any packets
-
-		ulong_64b size();														// Status: Current write size
-
-		NetPacketBuilder& append(char datum);									// Write a single char
-		NetPacketBuilder& append(char *data, ulong_64b size);					// Write a block of data
-		NetPacketBuilder& append(char *data);									// For writing strings (or any string of data wherein the length can be determined by finding a null-terminator)
-
-		NetPacket* build();														// Generate packet
-	};
-
-	class NetPacket {
-		friend class NetPacketBuilder;
-		friend class SparseNetPacket;
-		friend class NetServer;
-		friend class NetClient;
-	private:
-		ulong_64b _size;
-		NetPacket(char PUID);													// Special builder constructor
-		NetPacket(ulong_64b &size, char PUID, ulong_64b sparseSize, char* msg);	// Special sparse constructor
-
-	protected:
-		char *message;															// The actual message
-
-		virtual void write(char* toWrite, ulong_64b writeCount);				// Special builder function
-		virtual void write(char toWrite);										// Special builder function
-
-	public:
-		const ulong_64b& size;													// Immutable value denoting size of message
-		const char PUID;														// Immutable value denoting "unique", incremental id of this message
-
-		NetPacket(ulong_64b size, char PUID, char *message);					// Standard constructor
-		virtual ~NetPacket();													// Destructor for packet
-
-		virtual char* __cdecl read(ulong_64b readCount, ulong_64b startIndex);	// Read a block of data
-		virtual char* __cdecl read(ulong_64b readCount);						// Read a block of data starting at index 0
-		virtual char* __cdecl copyMessage();									// Get a copy of entire message
-	};
-	
-	// Sparse packet. This should be for messages >BUFSIZE
-	class SparseNetPacket : public NetPacket {
-		friend class NetPacketBuilder;
-		friend class NetServer;
-		friend class NetClient;
-	private:
-		ulong_64b sparseSize;
-
-	protected:
-		ulong_64b sparseCount;
-		char** sparseFull;
-		const ulong_64b maxPerPacket;
-
-		SparseNetPacket(ulong_64b size, char PUID, ulong_64b sparseSize, char* message, ulong_64b maxPerPacket);
-		SparseNetPacket(char PUID, ulong_64b maxPerPacket);
-
-		virtual void write(char * toWrite, ulong_64b writeCount);
-		virtual void write(char toWrite);
-
-	public:
-		virtual ~SparseNetPacket();
-		virtual char* __cdecl read(ulong_64b readCount, ulong_64b startIndex);
-		virtual char* __cdecl copyMessage();
-	};
-
-
-
-
-
 	struct Packet {
 		ulong_64b size;
 		char packetUID;
 		char* message;
 	};
 
-	/*
-	// First sparse packet implementation. All future ones should follow this model
-
-	typedef char* SparsePacket;
-	struct SparsePacketSet {
-		ulong_64b lastSize;
-		ulong_64b sparseCount;
-		SparsePacket* sparse;
-		SparsePacket last;
-	};
-	*/
-
+	class NetServer;
 	class NetClient {
 		friend class NetServer;					// Allow NetServer to access all members of NetClient
 
@@ -146,11 +54,7 @@ namespace IO {
 		bool startNegotiate = false;
 		char expectedNextPUID = 0;
 		char remotePUID = 0;
-		std::vector<char>* sparse;				// DEPRECATED
-
-		ulong_64b expect = 0;
-		NetPacketBuilder* builder = nullptr;
-
+		std::vector<char>* sparse;
 		std::vector<Packet>* outPacketBuf;
 		Crypto::RSA::KeyData keys;				// Client's keysets (if using encryption)
 		CryptoPP::RSAFunction pK;				// Remote host's public key (if using encryption)
@@ -185,6 +89,7 @@ namespace IO {
 		bool isOpen();
 		ulong_64b available();
 	};
+
 	class NetServer {
 		friend class NetClient;
 	private:

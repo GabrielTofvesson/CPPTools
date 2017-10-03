@@ -8,8 +8,8 @@
 #define BUFSIZE 512
 #define BUF_2_MAX 2048
 #else
-#define BUFSIZE 16384
-#define BUF_2_MAX 16384
+#define BUFSIZE 1073741824		// 1 GiB
+#define BUF_2_MAX 1073741824	// 1 GiB
 #endif
 
 #define WIN32_LEAN_AND_MEAN
@@ -44,7 +44,8 @@ namespace IO {
 		volatile bool _open;					// Whether or not connection is open
 		bool canWrite;							// Whether or not writing to peer is possible
 		bool noThread;							// Whether or not reading incoming data should be / is being done in a separate thread
-		char rBuf[BUFSIZE];						// Recieve buffer
+		//char rBuf[BUFSIZE];					// Recieve buffer
+		std::vector<char> rBuf;
 		CryptoLevel preferEncrypted = CryptoLevel::None;// Whether or not the socket should attempt to request an encrypted channel
 		bool encrypted = false;					// Whether or not negotiation determined the use of an encrypted channel
 		bool firstMessage = true;				// Whether or not negotiation has yet ocurred

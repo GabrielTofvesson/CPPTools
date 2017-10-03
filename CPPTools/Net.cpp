@@ -48,6 +48,7 @@ namespace IO {
 		packets = new std::vector<Packet>();
 		sparse = new std::vector<char>();
 		outPacketBuf = new std::vector<Packet>();
+		rBuf.resize(1);
 		_open = true;
 		canWrite = true;
 		evt = nullptr;
@@ -211,7 +212,8 @@ namespace IO {
 		rdErr = ioctlsocket(_socket, FIONREAD, &rCount);
 		if (rdErr == SOCKET_ERROR) throw new _exception(); // Error using socket :(
 		if (rCount > 0) {
-			iResult = recv(_socket, rBuf, BUFSIZE, 0);
+			rBuf.resize(rCount);
+			iResult = recv(_socket, &rBuf[0], rCount, 0);
 			if (iResult > 0)
 				for (int i = 0; i < iResult; ++i)
 					if (sparse->size() < BUF_2_MAX)

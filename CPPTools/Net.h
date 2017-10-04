@@ -36,6 +36,11 @@ namespace IO {
 		char* message;
 	};
 
+	struct PartialPacket {
+		ulong_64b size;
+		char* message;
+	};
+
 	class NetServer;
 	class NetClient {
 		friend class NetServer;					// Allow NetServer to access all members of NetClient
@@ -114,6 +119,11 @@ namespace IO {
 		void clearHandlers();
 		void setOnDestroy(std::function<void()>);
 		bool close();
+	};
+
+	class PartialNetworkStream{
+	public:
+		PartialNetworkStream(NetClient& client);
 	};
 }
 

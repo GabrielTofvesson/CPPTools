@@ -13,7 +13,7 @@ namespace IO {
 	}
 
 	char* __cdecl readSparse(std::vector<char>* sparse, ulong_64b rSize, bool pop = true) {
-		if (sparse->size() < rSize) throw new _exception(); // This should never happen if function is used correctly
+		if (sparse->size() < rSize) throw new std::exception(); // This should never happen if function is used correctly
 		char* c = new char[rSize];
 		for (ulong_64b b = 0; b < rSize; ++b) c[b] = sparse->at(b);
 		if (pop) sparse->erase(sparse->begin(), sparse->begin() + rSize);
@@ -54,7 +54,7 @@ namespace IO {
 		evt = nullptr;
 		char cryptoPref = static_cast<char>(preferEncrypted);
 		commTime = time(nullptr);
-		if (send(_socket, &cryptoPref, 1, 0) == SOCKET_ERROR) throw new _exception(); // Cannot establish connection :(
+		if (send(_socket, &cryptoPref, 1, 0) == SOCKET_ERROR) throw new std::exception(); // Cannot establish connection :(
 		if (!noThread) listener = std::thread([](NetClient& cli) { while (cli._open) { cli.update(); Sleep(25); } }, std::ref(*this)); // Setup separate thread for reading new data
 	}
 	NetClient::NetClient(char* ipAddr, char* port, CryptoLevel preferEncrypted) :
@@ -65,7 +65,7 @@ namespace IO {
 
 		WSADATA wsaData;
 		int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-		if (iResult != 0) throw new _exception();
+		if (iResult != 0) throw new std::exception();
 
 
 		struct addrinfo *result = NULL, *ptr = NULL, hints;
@@ -77,14 +77,14 @@ namespace IO {
 
 		iResult = getaddrinfo(ipAddr, port, &hints, &result);
 
-		if (iResult) throw new _exception();
+		if (iResult) throw new std::exception();
 
 		for (ptr = result; ptr != NULL; ptr = ptr->ai_next) {
 
 			// Create a SOCKET for connecting to server
 			_socket = socket(ptr->ai_family, ptr->ai_socktype, ptr->ai_protocol);
 			if (_socket == INVALID_SOCKET) {
-				throw new _exception();
+				throw new std::exception();
 			}
 
 			// Connect to server.
@@ -99,7 +99,7 @@ namespace IO {
 
 		freeaddrinfo(result);
 
-		if (_socket == INVALID_SOCKET) throw new _exception();
+		if (_socket == INVALID_SOCKET) throw new std::exception();
 
 		sharedSetup();
 	}
@@ -140,12 +140,13 @@ namespace IO {
 			else if (i == 0) --wIdx;
 		}
 		commTime = time(nullptr);
+		return true;
 	}
 
 	size_t NetClient::getBOPCount() { return firstMessage ? outPacketBuf->size() : 0; }
 
 	bool NetClient::_write(char* message, ulong_64b size) {
-		if (size==FLAG_PING) throw new _exception();	   // Max value is reserved for ping packet
+		if (size==FLAG_PING) throw new std::exception();	   // Max value is reserved for ping packet
 		int i;
 		char* c = new char[sizeof(ulong_64b)];
 		memcpy(c, &size, sizeof(ulong_64b));
@@ -192,7 +193,7 @@ namespace IO {
 			packets->erase(packets->begin(), packets->begin() + 1); // Delete first buffered packet
 			return p;
 		}
-		throw new _exception(); // No packets available!
+		throw new std::exception(); // No packets available!
 	}
 	void NetClient::setEventHandler(std::function<void(NetClient*, Packet)> _ev) {
 		evt = _ev;
@@ -332,7 +333,7 @@ namespace IO {
 
 			// Initialize Winsock
 			iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-			if (iResult != 0) throw new _exception();
+			if (iResult != 0) throw new std::exception();
 
 
 			ZeroMemory(&hints, sizeof(hints));
@@ -344,14 +345,14 @@ namespace IO {
 			// Resolve the server address and port
 			iResult = getaddrinfo(NULL, port, &hints, &result);
 			if (iResult) {
-				throw new _exception();
+				throw new std::exception();
 			}
 
 			// Create a SOCKET for connecting to server
 			_server = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
 			if (_server == INVALID_SOCKET) {
 				freeaddrinfo(result);
-				throw new _exception();
+				throw new std::exception();
 			}
 
 			// Setup the TCP listening socket
@@ -359,11 +360,11 @@ namespace IO {
 			if (iResult == SOCKET_ERROR) {
 				freeaddrinfo(result);
 				closesocket(_server);
-				throw new _exception();  // Can't be fucked to deal with errors
+				throw new std::exception();  // Can't be fucked to deal with errors
 			}
 			if (listen(_server, 20) == SOCKET_ERROR) { // 20 is the backlog amount, i.e. amount of connections Windows will accept if program is busy and can't accept atm.
 				closesocket(_server);
-				throw new _exception();
+				throw new std::exception();
 			}
 			timeval t;
 			t.tv_sec = 0;
@@ -373,14 +374,12 @@ namespace IO {
 				connecting.fd_count = 1;
 				connecting.fd_array[0] = _server;
 				int i = select(NULL, &connecting, NULL, NULL, &t); // Check for new clients
-				if (i == SOCKET_ERROR) {
-					throw new _exception();
-				}
+				if (i == SOCKET_ERROR) throw new std::exception();
 				if (connecting.fd_count > 0) { // This checks if any new clients are tryig to connect. If not, don't block to await one; just continue to update clients
 					SOCKET client = accept(_server, NULL, NULL);
 					if (client == INVALID_SOCKET) {
 						closesocket(_server);
-						if (_open) throw new _exception();
+						if (_open) throw new std::exception();
 						else break;
 					}
 					NetClient* cli = new NetClient(client, true, keys, this->pref, false);

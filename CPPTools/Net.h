@@ -16,6 +16,8 @@
 
 // Ping flag tells the recieving host to drop the current ulong_64b, as it is sent to check if the connection is still alive
 #define FLAG_PING (ulong_64b)-1
+#define FLAG_PART (ulong_64b)-2
+#define FLAG_NPRT (ulong_64b)-3
 
 #include "Crypto.h"
 #include "ArchAbstract.h"
@@ -73,6 +75,7 @@ namespace IO {
 		void update();							// Read incoming data and store in buffers
 		bool ping();							// Check if connection is alive by pinging remote host
 	protected:
+		std::vector<std::pair<char*, std::pair<ulong_64b, char*>*>*> associatedData;
 		std::thread listener;					// Incoming data listener (optional)
 		SOCKET _socket;							// Underlying socket used for communication
 		std::vector<Packet>* packets;			// Basically a set containing a backlog of unprocessed data. Will oly be used if event handler doesn't exist
@@ -80,7 +83,6 @@ namespace IO {
 		std::function<void()> onDestroy;		// Event handler called when NetClient object is destroyed
 	public:
 		time_t commTime;						// Latest time a transaction occurred
-		std::vector<char*> associatedData;
 		NetClient(char* ipAddr, char* port, CryptoLevel = CryptoLevel::None);// Standard constructor for creating connection
 		~NetClient();
 		bool close();
@@ -92,6 +94,12 @@ namespace IO {
 		Packet read();
 		void setEventHandler(std::function<void(NetClient*, Packet)>);		// Register a callback that is guaranteed to be called when the socket has at least one unprocessed packet
 		void setOnDestroy(std::function<void()>);
+		std::pair<ulong_64b, char*> getValue(const char* name, bool copy = true);
+		char* getStrValue(const char* name, bool copy = true);
+		void setValue(const char* name, std::pair<ulong_64b, char*> value, bool copy = true, bool del = true);
+		void setValue(const char* name, char* data, bool copy = true, bool del = true);
+		bool removeValue(const char* name, bool del = true);
+		bool containsKey(const char* name);
 		bool isOpen();
 		ulong_64b available();
 	};
@@ -121,9 +129,55 @@ namespace IO {
 		bool close();
 	};
 
-	class PartialNetworkStream{
+
+
+	// Partial data stream management
+	static const auto STREAM_DELIMIT = FLAG_PART;
+	static const auto STREAM_PAUSE   = FLAG_NPRT;
+	static const auto STREAM_ATTRIB  = (const char*) "$PartialNetworkStream$ACTIVE";
+	static const auto STREAM_BUFMIN  = 32;
+
+
+	/*
+	  START represents the beginning of a partial message
+	  PAUSE represents a pause in the partial stream in which a full (unrelated) message is being sent
+	  RESUME tells dev that the partial stream is being resumed (from a full-write state)
+	  END   represebts the end of a partial message
+	  DATA  represents the the supplied data isn't metadata
+	*/
+	enum PartialDataState { START, PAUSE, RESUME, END, DATA };
+
+	/*
+	  PARTIAL tells you that the stream is currently accepting partial data packets
+	  PAUSE means that the client is set to accept a partial stream, but has been specifically paused to accept a full message
+	  FULL means that the client is interpreting messages as full message blocks
+	*/
+	enum PartialCommState { COMM_FULL, COMM_PARTIAL, COMM_PAUSE };
+
+
+	class PartialNetworkStream : public std::ostream{
+	protected:
+		bool open;
+		std::vector<char>* buffer;
+		NetClient& client;
+
+		void check(PartialCommState state);
+		void sendState(PartialCommState state);
+
+		static bool stateIs(NetClient& cli, PartialCommState state);
 	public:
-		PartialNetworkStream(NetClient& client);
+		PartialNetworkStream(NetClient&, bool = false);
+		~PartialNetworkStream();
+
+		void endPartial();
+		void startPartial();
+		PartialCommState getCommState();
+		void write(char*, std::streamsize, bool = false);
+		void writeNonPartial(char*, std::streamsize);
+		void flush();
+
+		static PartialDataState accept(NetClient& cli, Packet& pkt);
+
 	};
 }
 

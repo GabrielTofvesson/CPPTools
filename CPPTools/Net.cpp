@@ -299,6 +299,59 @@ namespace IO {
 
 	void NetClient::setOnDestroy(std::function<void()> call) { onDestroy = call; }
 
+
+	std::pair<ulong_64b, char*> NetClient::getValue(const char* name, bool copy) {
+		for(std::pair<char*, std::pair<ulong_64b, char*>*>* p : associatedData)
+			if (!strcmp(p->first, name)) {
+				char* c = copy ? new char[p->second->first] : p->second->second;
+				if (copy) memcpy(c, p->second->second, p->second->first);
+				return std::pair<ulong_64b, char*>(p->second->first, c);
+			}
+		return std::pair<ulong_64b, char*>(0, nullptr);
+	}
+	char* NetClient::getStrValue(const char* name, bool copy) {
+		return getValue(name, copy).second;
+	}
+	void NetClient::setValue(const char* name, std::pair<ulong_64b, char*> value, bool copy, bool del) {
+		for (std::pair<char*, std::pair<ulong_64b, char*>*>* p : associatedData)
+			if (!strcmp(p->first, name)) {
+				p->second->first = value.first;
+				if (del) delete[] p->second->second;
+				char* c = copy ? new char[value.first] : value.second;
+				if (copy) memcpy(c, value.second, value.first);
+				p->second->second = c;
+				return;
+			}
+		std::pair<char*, std::pair<ulong_64b, char*>*>* p = new std::pair<char*, std::pair<ulong_64b, char*>*>();
+		p->first = (char*)name;
+		p->second = new std::pair<ulong_64b, char*>();
+		p->second->first = value.first;
+		if (del) delete[] p->second->second;
+		char* c = copy ? new char[value.first] : value.second;
+		if (copy) memcpy(c, value.second, value.first);
+		p->second->second = c;
+
+		associatedData.push_back(p);
+	}
+	void NetClient::setValue(const char* name, char* value, bool copy, bool del) {
+		setValue(name, std::pair<ulong_64b, char*>(strlen(value), value), copy, del);
+	}
+	bool NetClient::removeValue(const char* name, bool del) {
+		for (size_t t = associatedData.size(); t>0; --t)
+			if (!strcmp(associatedData.at(t-1)->first, name)) {
+				if (del) delete[] associatedData.at(t-1)->second->second;
+				associatedData.erase(associatedData.begin()+t-1, associatedData.begin()+t);
+				return true;
+			}
+		return false;
+	}
+	bool NetClient::containsKey(const char* name) {
+		for (size_t t = associatedData.size(); t>0; --t)
+			if (!strcmp(associatedData.at(t - 1)->first, name))
+				return true;
+		return false;
+	}
+
 	ulong_64b NetClient::available() { return packets->size(); }
 
 
@@ -429,4 +482,120 @@ namespace IO {
 	bool NetServer::isOpen() { return _open; }
 
 	void NetServer::setOnDestroy(std::function<void()> call) { onDestroy = call; }
+
+
+
+	void writeState(NetClient& cli, const char* stateName, char state) {
+		char* c = cli.getStrValue(stateName, false);
+		if (c == nullptr) c = new char[0];
+		c[0] = state;
+		cli.setValue(stateName, c, false, false); // Write/overwrite
+	}
+
+	char readState(NetClient& cli, const char* stateName) {
+		char* c = cli.getStrValue(stateName, false);
+		if (c == nullptr) return 0;
+		else return *c;
+	}
+
+	PartialNetworkStream::PartialNetworkStream(NetClient& client, bool noBuffer) : std::ostream(std::_Uninitialized::_Noinit), client(client), buffer(noBuffer?nullptr:new std::vector<char>()){ /* NOP */}
+	PartialNetworkStream::~PartialNetworkStream() {
+		if (client.isOpen()) {
+			client.write((char*)STREAM_DELIMIT, 8);
+		}
+		client.removeValue(STREAM_ATTRIB); // Cleanup
+	}
+	void PartialNetworkStream::write(char* message, std::streamsize size, bool autoFlush) {
+		bool isPartial = stateIs(client, PartialCommState::COMM_PARTIAL);
+		if (!isPartial || autoFlush || (size > STREAM_BUFMIN)) {
+			if(isPartial) flush();
+			client.write(message, size);
+		}
+		else {
+			for (size_t t = 0; t < size; ++t) buffer->push_back(message[t]);
+			if (buffer->size() > STREAM_BUFMIN) flush();
+		}
+	}
+	void PartialNetworkStream::writeNonPartial(char* message, std::streamsize size) {
+		bool b = stateIs(client, PartialCommState::COMM_PARTIAL);
+		if (b) sendState(PartialCommState::COMM_PAUSE);
+		client.write(message, size);
+		if (b) sendState(PartialCommState::COMM_PARTIAL);
+	}
+	void PartialNetworkStream::flush() {
+		check(PartialCommState::COMM_FULL);
+		if (buffer->size() == 0) return;
+		bool b = stateIs(client, PartialCommState::COMM_PARTIAL);
+		if (b) sendState(PartialCommState::COMM_PARTIAL); // Temporarily set the remote read state to PARTIAL
+		client.write(&buffer->at(0), buffer->size());
+		if (b) sendState(PartialCommState::COMM_PAUSE);   // Set the remote read state back to PAUSE
+		buffer->clear();
+	}
+	void PartialNetworkStream::check(PartialCommState state) { if(readState(client, STREAM_ATTRIB)==state) throw new std::exception("Stream is not open!"); }
+	void PartialNetworkStream::sendState(PartialCommState state) {
+		switch (getCommState()) {
+		case PartialCommState::COMM_PAUSE:
+			if (state == PartialCommState::COMM_FULL) {
+				client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
+				client.write((char*)&STREAM_DELIMIT, sizeof(STREAM_DELIMIT));
+			}
+			else if (state == PartialCommState::COMM_PARTIAL) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
+			break;
+		case PartialCommState::COMM_PARTIAL:
+			if (state == PartialCommState::COMM_FULL) client.write((char*)&STREAM_DELIMIT, sizeof(STREAM_DELIMIT));
+			else if (state == PartialCommState::COMM_PAUSE) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
+			break;
+		case PartialCommState::COMM_FULL:
+			if (state == PartialCommState::COMM_PARTIAL) client.write((char*)&STREAM_DELIMIT, sizeof(STREAM_DELIMIT));
+			else if (state == PartialCommState::COMM_PAUSE) {
+				client.write((char*)&STREAM_DELIMIT, sizeof(STREAM_PAUSE));
+				client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
+			}
+			break;
+		}
+	}
+
+	void PartialNetworkStream::endPartial() {
+		sendState(PartialCommState::COMM_FULL);
+	}
+	void PartialNetworkStream::startPartial() {
+		sendState(PartialCommState::COMM_PARTIAL);
+	}
+	PartialCommState PartialNetworkStream::getCommState() {
+		return static_cast<PartialCommState>(readState(client, STREAM_ATTRIB));
+	}
+	bool PartialNetworkStream::stateIs(NetClient& cli, PartialCommState state) { return readState(cli, STREAM_ATTRIB) == state; }
+	PartialDataState PartialNetworkStream::accept(NetClient& cli, Packet& pkt) {
+		bool toggle_partial = pkt.size == sizeof(ulong_64b) && ((*(ulong_64b*)pkt.message) == STREAM_DELIMIT);
+		bool toggle_pause = !toggle_partial && (pkt.size == sizeof(ulong_64b) && ((*(ulong_64b*)pkt.message) == STREAM_PAUSE));
+		if (!toggle_partial && !toggle_pause) return PartialDataState::DATA;
+		else if (toggle_partial) {
+			if (stateIs(cli, PartialCommState::COMM_FULL)) {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_PARTIAL);
+				return PartialDataState::START;
+			}
+			else if (stateIs(cli, PartialCommState::COMM_PAUSE)) {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_PARTIAL);
+				return PartialDataState::RESUME;
+			}
+			else {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_FULL);
+				return PartialDataState::END;
+			}
+		}
+		else /* if(toggle_pause) */{
+			if (stateIs(cli, PartialCommState::COMM_FULL)) {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_PAUSE);
+				return PartialDataState::PAUSE;
+			}
+			else if (stateIs(cli, PartialCommState::COMM_PAUSE)) {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_PARTIAL);
+				return PartialDataState::RESUME;
+			}
+			else {
+				writeState(cli, STREAM_ATTRIB, PartialCommState::COMM_PAUSE);
+				return PartialDataState::PAUSE;
+			}
+		}
+	}
 }

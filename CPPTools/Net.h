@@ -157,16 +157,15 @@ namespace IO {
 
 	class PartialNetworkStream : public std::ostream{
 	protected:
+		const bool permissive;
 		bool open;
 		std::vector<char>* buffer;
 		NetClient& client;
 
-		void check(PartialCommState state);
+		bool check(PartialCommState state);
 		void sendState(PartialCommState state);
-
-		static bool stateIs(NetClient& cli, PartialCommState state);
 	public:
-		PartialNetworkStream(NetClient&, bool = false);
+		PartialNetworkStream(NetClient&, bool = false, bool = true);
 		~PartialNetworkStream();
 
 		void endPartial();
@@ -177,6 +176,7 @@ namespace IO {
 		void flush();
 
 		static PartialDataState accept(NetClient& cli, Packet& pkt);
+		static bool stateIs(NetClient& cli, PartialCommState state);
 
 	};
 }

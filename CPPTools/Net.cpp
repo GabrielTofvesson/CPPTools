@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <ws2tcpip.h>
 
+
 namespace IO {
 	bool cryptoLevelsAreCompatible(CryptoLevel l1, CryptoLevel l2) {
 		return !(((l1 == CryptoLevel::None) && (l2 == CryptoLevel::Force)) || ((l2 == CryptoLevel::None) && (l1 == CryptoLevel::Force)));
@@ -498,10 +499,17 @@ namespace IO {
 		else return *c;
 	}
 
-	PartialNetworkStream::PartialNetworkStream(NetClient& client, bool noBuffer) : std::ostream(std::_Uninitialized::_Noinit), client(client), buffer(noBuffer?nullptr:new std::vector<char>()){ /* NOP */}
+	PartialNetworkStream::PartialNetworkStream(NetClient& client, bool noBuffer, bool permissive) :
+		std::ostream(std::_Uninitialized::_Noinit),
+		client(client),
+		buffer(noBuffer?nullptr:new std::vector<char>()),
+		permissive(permissive)
+	{ /* NOP */}
+
 	PartialNetworkStream::~PartialNetworkStream() {
-		if (client.isOpen()) {
-			client.write((char*)STREAM_DELIMIT, 8);
+		if (client.isOpen() && !stateIs(client, PartialCommState::COMM_FULL)) {
+			sendState(PartialCommState::COMM_FULL);
+			writeState(client, STREAM_ATTRIB, PartialCommState::COMM_FULL);
 		}
 		client.removeValue(STREAM_ATTRIB); // Cleanup
 	}
@@ -518,20 +526,26 @@ namespace IO {
 	}
 	void PartialNetworkStream::writeNonPartial(char* message, std::streamsize size) {
 		bool b = stateIs(client, PartialCommState::COMM_PARTIAL);
-		if (b) sendState(PartialCommState::COMM_PAUSE);
+		if (b) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
 		client.write(message, size);
-		if (b) sendState(PartialCommState::COMM_PARTIAL);
+		if (b) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));
 	}
 	void PartialNetworkStream::flush() {
-		check(PartialCommState::COMM_FULL);
+		if(!check(PartialCommState::COMM_FULL)) return; // Check failed in a permissive state
 		if (buffer->size() == 0) return;
-		bool b = stateIs(client, PartialCommState::COMM_PARTIAL);
-		if (b) sendState(PartialCommState::COMM_PARTIAL); // Temporarily set the remote read state to PARTIAL
+		bool b = stateIs(client, PartialCommState::COMM_PAUSE);
+		if (b) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE)); // Temporarily set the remote read state to PARTIAL
 		client.write(&buffer->at(0), buffer->size());
-		if (b) sendState(PartialCommState::COMM_PAUSE);   // Set the remote read state back to PAUSE
+		if (b) client.write((char*)&STREAM_PAUSE, sizeof(STREAM_PAUSE));   // Set the remote read state back to PAUSE
 		buffer->clear();
 	}
-	void PartialNetworkStream::check(PartialCommState state) { if(readState(client, STREAM_ATTRIB)==state) throw new std::exception("Stream is not open!"); }
+	bool PartialNetworkStream::check(PartialCommState state) {
+		if (readState(client, STREAM_ATTRIB) == state) {
+			if (permissive) return false;
+			throw new std::exception("Stream is not open!");
+		}
+		return true;
+	}
 	void PartialNetworkStream::sendState(PartialCommState state) {
 		switch (getCommState()) {
 		case PartialCommState::COMM_PAUSE:
@@ -556,18 +570,21 @@ namespace IO {
 	}
 
 	void PartialNetworkStream::endPartial() {
+		flush();
 		sendState(PartialCommState::COMM_FULL);
+		writeState(client, STREAM_ATTRIB, PartialCommState::COMM_FULL);
 	}
 	void PartialNetworkStream::startPartial() {
 		sendState(PartialCommState::COMM_PARTIAL);
+		writeState(client, STREAM_ATTRIB, PartialCommState::COMM_PARTIAL);
 	}
 	PartialCommState PartialNetworkStream::getCommState() {
 		return static_cast<PartialCommState>(readState(client, STREAM_ATTRIB));
 	}
 	bool PartialNetworkStream::stateIs(NetClient& cli, PartialCommState state) { return readState(cli, STREAM_ATTRIB) == state; }
 	PartialDataState PartialNetworkStream::accept(NetClient& cli, Packet& pkt) {
-		bool toggle_partial = pkt.size == sizeof(ulong_64b) && ((*(ulong_64b*)pkt.message) == STREAM_DELIMIT);
-		bool toggle_pause = !toggle_partial && (pkt.size == sizeof(ulong_64b) && ((*(ulong_64b*)pkt.message) == STREAM_PAUSE));
+		bool toggle_partial = (pkt.size-1) == sizeof(STREAM_DELIMIT) && ((*(ulong_64b*)pkt.message) == STREAM_DELIMIT);
+		bool toggle_pause = !toggle_partial && ((pkt.size-1) == sizeof(STREAM_PAUSE) && ((*(ulong_64b*)pkt.message) == STREAM_PAUSE));
 		if (!toggle_partial && !toggle_pause) return PartialDataState::DATA;
 		else if (toggle_partial) {
 			if (stateIs(cli, PartialCommState::COMM_FULL)) {

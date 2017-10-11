@@ -21,7 +21,7 @@ namespace Tools {
 	ulong_64b lastIndexOf(char*, char);
 	char* copydata(const char*, ulong_64b);
 	char* toHexString(const void* data, ulong_64b size);
-	char* toHexString(ulong_64b value);
+	char* toHexString(ulong_64b);
 	bool isDigit(char c);
 	bool isNumber(char* c);
 	bool isIP(char* c);

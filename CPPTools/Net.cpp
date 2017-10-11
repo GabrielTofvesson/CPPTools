@@ -44,8 +44,8 @@ namespace IO {
 
 
 
-	void NetClient::sharedSetup() {
-		if (preferEncrypted != CryptoLevel::None) keys = Crypto::RSA::rsa_gen_keys();
+	void NetClient::sharedSetup(bool setupKeys) {
+		if (setupKeys && (preferEncrypted != CryptoLevel::None)) keys = Crypto::RSA::rsa_gen_keys();
 		packets = new std::vector<Packet>();
 		sparse = new std::vector<char>();
 		outPacketBuf = new std::vector<Packet>();
@@ -58,8 +58,9 @@ namespace IO {
 		if (send(_socket, &cryptoPref, 1, 0) == SOCKET_ERROR) throw new std::exception(); // Cannot establish connection :(
 		if (!noThread) listener = std::thread([](NetClient& cli) { while (cli._open) { cli.update(); Sleep(25); } }, std::ref(*this)); // Setup separate thread for reading new data
 	}
-	NetClient::NetClient(char* ipAddr, char* port, CryptoLevel preferEncrypted) :
-		commTime(time(nullptr)), preferEncrypted(preferEncrypted), startNegotiate(false)
+	NetClient::NetClient(char* ipAddr, char* port, CryptoLevel preferEncrypted) : NetClient(ipAddr, port, preferEncrypted, true) {}
+	NetClient::NetClient(char* ipAddr, char* port, CryptoLevel preferEncrypted, bool setupKeys) :
+		preferEncrypted(preferEncrypted), startNegotiate(false)
 	{
 		_socket = INVALID_SOCKET;
 		this->noThread = false;
@@ -102,15 +103,17 @@ namespace IO {
 
 		if (_socket == INVALID_SOCKET) throw new std::exception();
 
-		sharedSetup();
+		sharedSetup(setupKeys);
 	}
 
+	NetClient::NetClient(char* ipAddr, char* port, Crypto::RSA::KeyData& keys, CryptoLevel level) : NetClient(ipAddr, port, level, false) { this->keys = keys; }
+
 	NetClient::NetClient(SOCKET wrap, bool noThread, Crypto::RSA::KeyData& keys, CryptoLevel preferEncrypted, bool startNegotiate) :
-		commTime(time(nullptr)), preferEncrypted(preferEncrypted), startNegotiate(startNegotiate)
+		preferEncrypted(preferEncrypted), startNegotiate(startNegotiate)
 	{
 		_socket = wrap;
 		this->noThread = noThread;
-		sharedSetup();
+		sharedSetup(true);
 	}
 
 	NetClient::~NetClient() {
@@ -357,20 +360,10 @@ namespace IO {
 
 
 
-	bool NetServer::close() {
-		if (!_open) return false;
-		_open = false;
-		for (ulong_64b t = clients->size(); t > 0; --t) {
-			NetClient* s = clients->at(t - 1);
-			s->close();
-			clients->pop_back();
-			delete s;
-		}
-		return true;
-	}
 
-	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f = nullptr, CryptoLevel pref = CryptoLevel::None) : pref(pref) {
-		if (pref != CryptoLevel::None) keys = Crypto::RSA::rsa_gen_keys();
+
+
+	void NetServer::sharedSetup(char* port, std::function<bool(NetClient*)> f) {
 		_open = true;
 		timeoutHandler = NULL;
 		onDestroy = NULL;
@@ -448,7 +441,29 @@ namespace IO {
 			closesocket(_server);
 			close();
 		});
+	}
 
+	bool NetServer::close() {
+		if (!_open) return false;
+		_open = false;
+		for (ulong_64b t = clients->size(); t > 0; --t) {
+			NetClient* s = clients->at(t - 1);
+			s->close();
+			clients->pop_back();
+			delete s;
+		}
+		return true;
+	}
+
+	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f, CryptoLevel pref) : pref(pref) {
+		if (pref != CryptoLevel::None) keys = Crypto::RSA::rsa_gen_keys();
+		sharedSetup(port, f);
+	}
+
+
+	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f, Crypto::RSA::KeyData& keys, CryptoLevel level) : pref(level) {
+		this->keys = keys;
+		sharedSetup(port, f);
 	}
 
 	NetServer::~NetServer() {
@@ -520,7 +535,7 @@ namespace IO {
 			client.write(message, size);
 		}
 		else {
-			for (size_t t = 0; t < size; ++t) buffer->push_back(message[t]);
+			for (std::streamsize t = 0; t < size; ++t) buffer->push_back(message[t]);
 			if (buffer->size() > STREAM_BUFMIN) flush();
 		}
 	}

@@ -67,9 +67,10 @@ namespace IO {
 		Crypto::RSA::KeyData keys;				// Client's keysets (if using encryption)
 		CryptoPP::RSAFunction pK;				// Remote host's public key (if using encryption)
 
+		NetClient(char*, char*, CryptoLevel, bool); // Underlying setup for regular constructors
 		NetClient(SOCKET, bool, CryptoLevel, bool);// Special setup constructor
 		NetClient(SOCKET, bool, Crypto::RSA::KeyData&, CryptoLevel = CryptoLevel::None, bool = false);// Create wrapper for existing socket
-		void sharedSetup();						// Setup function for all constructor
+		void sharedSetup(bool);					// Setup function for all constructor
 		bool _write(char*, ulong_64b);			// Internal write function. Doesn't do any of the fancy auto encryption: just raw write...
 		bool writeBufferedPackets();			// Flushes and deletes buffer
 		void update();							// Read incoming data and store in buffers
@@ -84,6 +85,7 @@ namespace IO {
 	public:
 		time_t commTime;						// Latest time a transaction occurred
 		NetClient(char* ipAddr, char* port, CryptoLevel = CryptoLevel::None);// Standard constructor for creating connection
+		NetClient(char* ipAddr, char* port, Crypto::RSA::KeyData&, CryptoLevel);// Standard constructor for creating connection with predefined keys
 		~NetClient();
 		bool close();
 		void closeWrite();
@@ -109,9 +111,10 @@ namespace IO {
 	private:
 		CryptoLevel pref;
 		Crypto::RSA::KeyData keys;				// Server's keysets (if using encryption)
-
 		std::function<void()> onDestroy;
 		volatile bool _open;
+
+		void sharedSetup(char* port, std::function<bool(NetClient*)> f);
 		void updateClients();
 	protected:
 		std::thread clientListener;
@@ -119,7 +122,8 @@ namespace IO {
 		std::vector<NetClient*>* clients;
 	public:
 		std::function<bool(NetClient*)> timeoutHandler;
-		NetServer(char* port, std::function<bool(NetClient*)>, CryptoLevel);
+		NetServer(char* port, std::function<bool(NetClient*)> = nullptr, CryptoLevel = CryptoLevel::None);
+		NetServer(char* port, std::function<bool(NetClient*)>, Crypto::RSA::KeyData&, CryptoLevel);
 		~NetServer();
 		bool isOpen();
 		CryptoLevel getCryptoPreference();

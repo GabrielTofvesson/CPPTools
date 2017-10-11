@@ -80,17 +80,23 @@ namespace Tools {
 		char* c = (char*)data;
 
 		ulong_64b lastNonZero = 0;
-		for (ulong_64b t = 0; t < size; ++t) if (c[t] != 0) lastNonZero = t;
-		if (lastNonZero == 0) return (char*)memset(malloc(1), '0', 1);
+		for (ulong_64b t = size; t > 0; --t) if (c[t - 1] != 0) {
+			lastNonZero = t - 1;
+			goto Ayy;
+		}
+		return new char[2]{ '0', 0 };
 
-		char* c1 = (char*)malloc(lastNonZero * 2);
-		for (ulong_64b t = 0; t < lastNonZero; ++t) {
-			c1[2 * t] = (c[t]) & 15;
-			if (c1[(2 * t)] < 9) c1[(2 * t)] += 48;
+		Ayy:
+		char* c1 = (char*)new char[1 + ((lastNonZero + 1) * 2)];
+		c1[lastNonZero * 2] = 0;
+		for (ulong_64b j = lastNonZero + 1; j > 0; --j) {
+			ulong_64b t = 1 + lastNonZero - j;
+			c1[2 * t] = (c[j - 1] >> 4) & 15;
+			if (c1[(2 * t)] < 10) c1[(2 * t)] += 48;
 			else c1[(2 * t)] += 55;
 
-			c1[(2 * t) + 1] = (c[t] >> 4) & 15;
-			if (c1[(2 * t) + 1] < 9) c1[(2 * t) + 1] += 48;
+			c1[(2 * t) + 1] = (c[j - 1]) & 15;
+			if (c1[(2 * t) + 1] < 10) c1[(2 * t) + 1] += 48;
 			else c1[(2 * t) + 1] += 55;
 		}
 		return c1;

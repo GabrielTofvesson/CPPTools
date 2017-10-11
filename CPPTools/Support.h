@@ -20,8 +20,11 @@ namespace Tools {
 	ulong_64b indexOf(char*, char);
 	ulong_64b lastIndexOf(char*, char);
 	char* copydata(const char*, ulong_64b);
+	char* toHexString(const void* data, ulong_64b size, bool);
 	char* toHexString(const void* data, ulong_64b size);
 	char* toHexString(ulong_64b);
+	void* parseHex(char*, size_t *rSize);
+	ulong_64b parseHexLong(char*);
 	bool isDigit(char c);
 	bool isNumber(char* c);
 	bool isIP(char* c);

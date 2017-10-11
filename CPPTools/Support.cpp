@@ -76,14 +76,18 @@ namespace Tools {
 		return c;
 	}
 
-	char* toHexString(const void* data, ulong_64b size) {
+	char* toHexString(const void* data, ulong_64b size, bool ignorePreZero) {
 		char* c = (char*)data;
 
-		ulong_64b lastNonZero = 0;
-		for (ulong_64b t = size; t > 0; --t) if (c[t - 1] != 0) {
-			lastNonZero = t - 1;
-			goto Ayy;
+		ulong_64b lastNonZero = ignorePreZero?0:size-1;
+		if (ignorePreZero) {
+			for (ulong_64b t = size; t > 0; --t)
+				if (c[t - 1] != 0) {
+					lastNonZero = t - 1;
+					goto Ayy;
+				}
 		}
+		else goto Ayy;
 		return new char[2]{ '0', 0 };
 
 		Ayy:
@@ -102,7 +106,24 @@ namespace Tools {
 		return c1;
 	}
 
-	char* toHexString(ulong_64b value) { return toHexString(&value, sizeof(value)); }
+	char* toHexString(const void* data, ulong_64b size) { return toHexString(data, size, true); }
+
+	char* toHexString(ulong_64b value) { return toHexString(&value, sizeof(value), false); }
+
+	void* parseHex(char* c, size_t *rSize) {
+		size_t len = strlen(c);
+		size_t rem = (len % 2);
+		size_t target = (len + rem) / 2;
+		if (rSize != nullptr) *rSize = target;
+		char* out = new char[target];
+		if (rem) out[target - 1] = c[0] - (c[0]>64 ? 55 : 48);
+		for (size_t t = rem; t < len; ++t) {
+			out[target - 1 - ((t + rem) / 2)] |= (c[t] - (c[t] > 64 ? 55 : 48)) << (((t + 1) % 2) * 4);
+		}
+		return out;
+	}
+
+	ulong_64b parseHexLong(char* c) { return *(ulong_64b*)parseHex(c, nullptr); }
 
 	bool isDigit(char c) { return (c > 47) && (c < 58); }
 

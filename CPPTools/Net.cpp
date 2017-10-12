@@ -297,7 +297,7 @@ namespace IO {
 			_open = false;
 			close();
 		}
-		if ((time(nullptr) - commTime) > 1) if (!ping()) { _open = false; close(); }
+		if (autoPing && ((time(nullptr) - commTime) > 1)) if (!ping()) { _open = false; close(); }
 	}
 	bool NetClient::isOpen() { return _open; }
 
@@ -357,7 +357,6 @@ namespace IO {
 	}
 
 	ulong_64b NetClient::available() { return packets->size(); }
-
 
 
 
@@ -498,6 +497,8 @@ namespace IO {
 	bool NetServer::isOpen() { return _open; }
 
 	void NetServer::setOnDestroy(std::function<void()> call) { onDestroy = call; }
+
+	void NetServer::setAutoPing(bool b) { for (NetClient* cli : *clients) cli->autoPing = b; }
 
 
 

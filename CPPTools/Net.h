@@ -74,15 +74,17 @@ namespace IO {
 		bool _write(char*, ulong_64b);			// Internal write function. Doesn't do any of the fancy auto encryption: just raw write...
 		bool writeBufferedPackets();			// Flushes and deletes buffer
 		void update();							// Read incoming data and store in buffers
-		bool ping();							// Check if connection is alive by pinging remote host
 	protected:
 		std::vector<std::pair<char*, std::pair<ulong_64b, char*>*>*> associatedData;
 		std::thread listener;					// Incoming data listener (optional)
 		SOCKET _socket;							// Underlying socket used for communication
 		std::vector<Packet>* packets;			// Basically a set containing a backlog of unprocessed data. Will oly be used if event handler doesn't exist
+
+
 		std::function<void(NetClient*, Packet)> evt;	// New data event handler
 		std::function<void()> onDestroy;		// Event handler called when NetClient object is destroyed
 	public:
+		bool autoPing = true;					// Whether or not client should actively check connection state
 		time_t commTime;						// Latest time a transaction occurred
 		NetClient(char* ipAddr, char* port, CryptoLevel = CryptoLevel::None);// Standard constructor for creating connection
 		NetClient(char* ipAddr, char* port, Crypto::RSA::KeyData&, CryptoLevel);// Standard constructor for creating connection with predefined keys
@@ -94,7 +96,7 @@ namespace IO {
 		bool write(void* message, ulong_64b size);
 		bool write(char* message);
 		Packet read();
-		void setEventHandler(std::function<void(NetClient*, Packet)>);		// Register a callback that is guaranteed to be called when the socket has at least one unprocessed packet
+		void setEventHandler(std::function<void(NetClient*, Packet)>);// Register a callback that is guaranteed to be called when the socket has at least one unprocessed packet
 		void setOnDestroy(std::function<void()>);
 		std::pair<ulong_64b, char*> getValue(const char* name, bool copy = true);
 		char* getStrValue(const char* name, bool copy = true);
@@ -104,6 +106,7 @@ namespace IO {
 		bool containsKey(const char* name);
 		bool isOpen();
 		ulong_64b available();
+		bool ping();							// Check if connection is alive by pinging remote host
 	};
 
 	class NetServer {
@@ -131,6 +134,7 @@ namespace IO {
 		void clearHandlers();
 		void setOnDestroy(std::function<void()>);
 		bool close();
+		void setAutoPing(bool);
 	};
 
 

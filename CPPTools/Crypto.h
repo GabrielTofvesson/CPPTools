@@ -50,11 +50,16 @@ namespace Crypto {
 
 	namespace RSA {
 		struct KeyData {
-			CryptoPP::RSA::PrivateKey *privKey;
-			CryptoPP::RSA::PublicKey *publKey;
+			const CryptoPP::RSA::PrivateKey *privKey;
+			const CryptoPP::RSA::PublicKey *publKey;
+			KeyData(CryptoPP::RSA::PrivateKey*, CryptoPP::RSA::PublicKey*);
+			~KeyData();
 		};
 
 		char* serializeKey(CryptoPP::RSA::PublicKey&, ulong_64b* rSize);
+		char* serializePrivKey(CryptoPP::RSA::PrivateKey&, ulong_64b* rSize);
+		CryptoPP::RSA::PublicKey* deserializePublicKey(char* c, ulong_64b size);
+		CryptoPP::RSA::PrivateKey* deserializePrivateKey(char* c, ulong_64b size);
 
 		KeyData* rsa_gen_keys();
 		char* rsa_encrypt(void* message, ulong_64b size, CryptoPP::RSA::PublicKey& pubKey, ulong_64b* resultingSize);

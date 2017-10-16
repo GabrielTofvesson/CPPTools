@@ -19,19 +19,22 @@ namespace IO {
 			return data;
 		});
 		done = suppressDelete = false;
+		chain = false;
 	}
 	AsyncKeys::AsyncKeys(Crypto::RSA::KeyData* predef) {
 		done = suppressDelete = true;
 		keys = predef;
+		chain = false;
+	}
+	AsyncKeys::AsyncKeys(AsyncKeys* chainKeys) {
+		this->chainKeys = chainKeys;
+		chain = true;
 	}
 	AsyncKeys::~AsyncKeys() {
-		if (!suppressDelete) {
-			delete keys->privKey;
-			delete keys->publKey;
-			delete keys;
-		}
+		if (!chain && !suppressDelete) delete keys;
 	}
 	Crypto::RSA::KeyData* AsyncKeys::get() {
+		if (chain) return chainKeys->get();
 		if (!done) {
 			keys = gen.get();
 		}
@@ -138,12 +141,12 @@ namespace IO {
 
 	NetClient::NetClient(char* ipAddr, char* port, AsyncKeys *keyData, CryptoLevel level) : NetClient(ipAddr, port, level, false) { this->keyData = keyData; }
 
-	NetClient::NetClient(SOCKET wrap, bool noThread, AsyncKeys &keyData, CryptoLevel preferEncrypted, bool startNegotiate) :
+	NetClient::NetClient(SOCKET wrap, bool noThread, AsyncKeys *keyData, CryptoLevel preferEncrypted, bool startNegotiate) :
 		preferEncrypted(preferEncrypted), startNegotiate(startNegotiate)
 	{
 		_socket = wrap;
 		this->noThread = noThread;
-		this->keyData = new AsyncKeys(keyData.get());
+		this->keyData = new AsyncKeys(keyData);
 		sharedSetup(false);
 	}
 
@@ -163,6 +166,10 @@ namespace IO {
 		if (isOpen()) close();
 	}
 	bool NetClient::close() {
+		if (getBOPCount()) {
+			scheduleTerminate = true;
+			return true;
+		}
 		bool result = !_open;
 		_open = false;
 		result &= (SOCKET_ERROR == shutdown(_socket, SD_BOTH));
@@ -231,8 +238,9 @@ namespace IO {
 		++size;
 		char* msg = encrypted ? Crypto::full_auto_encrypt(bMsg, size, pK, &size) : (char*)bMsg;
 		_write(msg, size);
-		if (encrypted) delete[] msg;
+		if (!autoDelete && encrypted) delete[] msg;
 		delete[] bMsg;
+		if (autoDelete) delete[] message;
 		return true;
 	}
 	bool NetClient::write(char* message) { return write(message, strlen(message)+1); } // Send together with the null-terminator
@@ -284,7 +292,7 @@ namespace IO {
 			delete[] size;
 
 			p.message = readSparse(sparse, p.size);
-			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, *keyData->get()->privKey, &p.size);
+			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, (CryptoPP::RSA::PrivateKey&)*keyData->get()->privKey, &p.size);
 
 			p.packetUID = p.message[0];
 			if (p.packetUID != expectedNextPUID) continue; // Detect packet replay/mismatch
@@ -317,9 +325,9 @@ namespace IO {
 						}
 						else {
 							ulong_64b size;
-							char* c = Crypto::RSA::serializeKey(*keyData->get()->publKey, &size);
+							char* c = Crypto::RSA::serializeKey((CryptoPP::RSA::PublicKey&)*keyData->get()->publKey, &size);
 							_write(c, size); // This shouldn't be encrypted
-							delete[] c;
+							if(!autoDelete) delete[] c;
 						}
 					}
 					else throw new std::exception(); // Incompatible cryptographic requirements!
@@ -348,6 +356,7 @@ namespace IO {
 			close();
 		}
 		if (autoPing && ((time(nullptr) - commTime) > 1)) if (!ping()) { _open = false; close(); }
+		if (scheduleTerminate && !getBOPCount()) close();
 	}
 	bool NetClient::isOpen() { return _open; }
 
@@ -466,6 +475,8 @@ namespace IO {
 			t.tv_sec = 0;
 			t.tv_usec = 5000;
 			do {
+				Next:
+				if (!_open) break;
 				fd_set connecting;
 				connecting.fd_count = 1;
 				connecting.fd_array[0] = _server;
@@ -478,7 +489,7 @@ namespace IO {
 						if (_open) throw new std::exception();
 						else break;
 					}
-					NetClient* cli = new NetClient(client, true, *keyData, this->pref, false);
+					NetClient* cli = new NetClient(client, true, keyData, this->pref, false);
 					clients->push_back(cli);
 					for (ulong_64b t = 0; t < handlers->size(); ++t)
 						if (handlers->at(t)(cli))
@@ -486,6 +497,12 @@ namespace IO {
 
 				}
 				updateClients();
+				if (scheduleTerminate) {
+					for (NetClient* cli : *clients)
+						if (cli->getBOPCount() > 0)
+							goto Next;
+					break;
+				}
 			} while (_open);
 			closesocket(_server);
 			close();
@@ -493,6 +510,12 @@ namespace IO {
 	}
 
 	bool NetServer::close() {
+		for (NetClient* cli : *clients) {
+			if (cli->getBOPCount() > 0) {
+				scheduleTerminate = true;
+				return true;
+			}
+		}
 		if (!_open) return false;
 		_open = false;
 		for (ulong_64b t = clients->size(); t > 0; --t) {
@@ -551,6 +574,10 @@ namespace IO {
 	void NetServer::setOnDestroy(std::function<void()> call) { onDestroy = call; }
 
 	void NetServer::setAutoPing(bool b) { for (NetClient* cli : *clients) cli->autoPing = b; }
+
+	ulong_64b NetServer::getClientCount() { return clients->size(); }
+
+	NetClient* NetServer::at(ulong_64b idx) { return clients->at(idx); }
 
 
 

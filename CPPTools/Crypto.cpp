@@ -163,6 +163,13 @@ namespace Crypto {
 	}
 
 	namespace RSA {
+
+		KeyData::KeyData(CryptoPP::RSA::PrivateKey *priv, CryptoPP::RSA::PublicKey *pub) : privKey(priv), publKey(pub) { }
+		KeyData::~KeyData() {
+			delete privKey;
+			delete publKey;
+		}
+
 		// -------- RSA START --------
 		KeyData* rsa_gen_keys() {
 
@@ -174,7 +181,7 @@ namespace Crypto {
 
 			params.GenerateRandomWithKeySize(rng, 3072);
 
-			KeyData* k = new KeyData{ new CryptoPP::RSA::PrivateKey(params), new CryptoPP::RSA::PublicKey(params) };
+			KeyData *k = new KeyData(new CryptoPP::RSA::PrivateKey(params), new CryptoPP::RSA::PublicKey(params));
 			return k;
 		}
 
@@ -196,6 +203,44 @@ namespace Crypto {
 			for (ulong_64b t = 0; t < spk.size(); ++t) shortened[t] = spk.at(t);
 
 			return (char*)shortened;
+		}
+
+		char* serializePrivKey(CryptoPP::RSA::PrivateKey& func, ulong_64b* rSize) {
+			CryptoPP::ByteQueue queue;
+			func.Save(queue);
+			//func.DEREncodePublicKey(queue);
+
+
+			byte* shortened = (byte*)new byte[*rSize = queue.TotalBytesRetrievable()];
+			memset(shortened, 0, *rSize);
+
+			std::vector<byte> spk;
+			spk.resize(queue.TotalBytesRetrievable());
+
+			CryptoPP::ArraySink snk(&spk[0], spk.size());
+			queue.CopyTo(snk);
+
+			for (ulong_64b t = 0; t < spk.size(); ++t) shortened[t] = spk.at(t);
+
+			return (char*)shortened;
+		}
+
+		CryptoPP::RSA::PublicKey* deserializePublicKey(char* c, ulong_64b size) {
+			CryptoPP::RSA::PublicKey *pK = new CryptoPP::RSA::PublicKey();
+
+			CryptoPP::StringSource src((const byte*)c, size, true);
+			pK->Load(src);
+
+			return pK;
+		}
+
+		CryptoPP::RSA::PrivateKey* deserializePrivateKey(char* c, ulong_64b size) {
+			CryptoPP::RSA::PrivateKey *pK = new CryptoPP::RSA::PrivateKey();
+
+			CryptoPP::StringSource src((const byte*)c, size, true);
+			pK->Load(src);
+
+			return pK;
 		}
 
 		char* rsa_encrypt(void* msg, ulong_64b size, CryptoPP::RSA::PublicKey& pubKey, ulong_64b* resultingSize) {

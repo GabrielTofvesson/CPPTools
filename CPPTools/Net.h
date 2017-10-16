@@ -35,11 +35,14 @@ namespace IO {
 	private:
 		std::future<Crypto::RSA::KeyData*> gen;
 		Crypto::RSA::KeyData* keys;
+		AsyncKeys* chainKeys;
 		volatile bool done;
 		bool suppressDelete;
+		bool chain;
 	public:
 		AsyncKeys();
 		AsyncKeys(Crypto::RSA::KeyData* predef);
+		AsyncKeys(AsyncKeys*);
 		~AsyncKeys();
 		Crypto::RSA::KeyData* get();
 	};
@@ -65,6 +68,7 @@ namespace IO {
 		volatile bool _open;					// Whether or not connection is open
 		bool canWrite;							// Whether or not writing to peer is possible
 		bool noThread;							// Whether or not reading incoming data should be / is being done in a separate thread
+		bool scheduleTerminate = false;
 		std::vector<char> rBuf;
 		CryptoLevel preferEncrypted = CryptoLevel::None;// Whether or not the socket should attempt to request an encrypted channel
 		bool encrypted = false;					// Whether or not negotiation determined the use of an encrypted channel
@@ -82,7 +86,7 @@ namespace IO {
 
 		NetClient(char*, char*, CryptoLevel, bool); // Underlying setup for regular constructors
 		NetClient(SOCKET, bool, CryptoLevel, bool);// Special setup constructor
-		NetClient(SOCKET, bool, AsyncKeys&, CryptoLevel = CryptoLevel::None, bool = false);// Create wrapper for existing socket
+		NetClient(SOCKET, bool, AsyncKeys*, CryptoLevel = CryptoLevel::None, bool = false);// Create wrapper for existing socket
 		void sharedSetup(bool);					// Setup function for all constructor
 		bool _write(char*, ulong_64b);			// Internal write function. Doesn't do any of the fancy auto encryption: just raw write...
 		bool writeBufferedPackets();			// Flushes and deletes buffer
@@ -130,6 +134,7 @@ namespace IO {
 		AsyncKeys *keyData;				// Server's keysets (if using encryption)
 		std::function<void()> onDestroy;
 		volatile bool _open;
+		bool scheduleTerminate = false;
 
 		void sharedSetup(char* port, std::function<bool(NetClient*)> f);
 		void updateClients();
@@ -149,6 +154,8 @@ namespace IO {
 		void setOnDestroy(std::function<void()>);
 		bool close();
 		void setAutoPing(bool);
+		ulong_64b getClientCount();
+		NetClient* at(ulong_64b);
 	};
 
 

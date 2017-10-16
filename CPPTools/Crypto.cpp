@@ -165,7 +165,6 @@ namespace Crypto {
 	namespace RSA {
 		// -------- RSA START --------
 		KeyData* rsa_gen_keys() {
-			KeyData* k = new KeyData();
 
 			CryptoPP::InvertibleRSAFunction params;
 			CryptoPP::RandomPool rng;
@@ -174,8 +173,8 @@ namespace Crypto {
 			rng.IncorporateEntropy((const byte*)&t, sizeof(t) * 8);
 
 			params.GenerateRandomWithKeySize(rng, 3072);
-			k->privKey = CryptoPP::RSA::PrivateKey(params);
-			k->publKey = CryptoPP::RSA::PublicKey(params);
+
+			KeyData* k = new KeyData{ new CryptoPP::RSA::PrivateKey(params), new CryptoPP::RSA::PublicKey(params) };
 			return k;
 		}
 

@@ -7,6 +7,7 @@
 #include <time.h>
 #include <windows.h>
 #include <ws2tcpip.h>
+#include <iostream>
 
 
 namespace IO {
@@ -23,9 +24,17 @@ namespace IO {
 		done = suppressDelete = true;
 		keys = predef;
 	}
-	AsyncKeys::~AsyncKeys() { if (!suppressDelete) delete keys; }
+	AsyncKeys::~AsyncKeys() {
+		if (!suppressDelete) {
+			delete keys->privKey;
+			delete keys->publKey;
+			delete keys;
+		}
+	}
 	Crypto::RSA::KeyData* AsyncKeys::get() {
-		if (!done) keys = gen.get();
+		if (!done) {
+			keys = gen.get();
+		}
 		return keys;
 	}
 
@@ -275,7 +284,7 @@ namespace IO {
 			delete[] size;
 
 			p.message = readSparse(sparse, p.size);
-			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, keyData->get()->privKey, &p.size);
+			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, *keyData->get()->privKey, &p.size);
 
 			p.packetUID = p.message[0];
 			if (p.packetUID != expectedNextPUID) continue; // Detect packet replay/mismatch
@@ -308,12 +317,12 @@ namespace IO {
 						}
 						else {
 							ulong_64b size;
-							char* c = Crypto::RSA::serializeKey(keyData->get()->publKey, &size);
+							char* c = Crypto::RSA::serializeKey(*keyData->get()->publKey, &size);
 							_write(c, size); // This shouldn't be encrypted
 							delete[] c;
 						}
 					}
-					else throw new _exception(); // Incompatible cryptographic requirements!
+					else throw new std::exception(); // Incompatible cryptographic requirements!
 				}
 				if (fm_neg_hasLevel && !fm_neg_hasSize && encrypted && sparse->size() >= sizeof(ulong_64b)) {
 					fm_neg_hasSize = true;

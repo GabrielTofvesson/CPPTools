@@ -56,7 +56,7 @@ namespace Crypto {
 
 		char* serializeKey(CryptoPP::RSA::PublicKey&, ulong_64b* rSize);
 
-		KeyData rsa_gen_keys();
+		KeyData* rsa_gen_keys();
 		char* rsa_encrypt(void* message, ulong_64b size, CryptoPP::RSA::PublicKey& pubKey, ulong_64b* resultingSize);
 		char* rsa_decrypt(void* message, ulong_64b size, CryptoPP::RSA::PrivateKey& privKey, ulong_64b* resultingSize);
 	}

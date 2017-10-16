@@ -26,9 +26,23 @@
 #include <vector>
 #include <thread>
 #include <functional>
+#include <future>
 
 
 namespace IO {
+
+	class AsyncKeys {
+	private:
+		std::future<Crypto::RSA::KeyData*> gen;
+		Crypto::RSA::KeyData* keys;
+		volatile bool done;
+		bool suppressDelete;
+	public:
+		AsyncKeys();
+		AsyncKeys(Crypto::RSA::KeyData* predef);
+		~AsyncKeys();
+		Crypto::RSA::KeyData* get();
+	};
 
 	enum CryptoLevel { None, Prefer, Force };
 
@@ -51,25 +65,24 @@ namespace IO {
 		volatile bool _open;					// Whether or not connection is open
 		bool canWrite;							// Whether or not writing to peer is possible
 		bool noThread;							// Whether or not reading incoming data should be / is being done in a separate thread
-		//char rBuf[BUFSIZE];					// Recieve buffer
 		std::vector<char> rBuf;
 		CryptoLevel preferEncrypted = CryptoLevel::None;// Whether or not the socket should attempt to request an encrypted channel
 		bool encrypted = false;					// Whether or not negotiation determined the use of an encrypted channel
 		bool firstMessage = true;				// Whether or not negotiation has yet ocurred
-		ulong_64b fm_neg_size;
-		bool fm_neg_hasLevel = false;
-		bool fm_neg_hasSize = false;
-		bool startNegotiate = false;
+		ulong_64b fm_neg_size;					// First message negotiation size
+		bool fm_neg_hasLevel = false;			// First message has crypto level
+		bool fm_neg_hasSize = false;			// Got negotiation size from first message
+		bool startNegotiate = false;			// Whether or not to initiate negotiation
 		char expectedNextPUID = 0;
 		char remotePUID = 0;
 		std::vector<char>* sparse;
 		std::vector<Packet>* outPacketBuf;
-		Crypto::RSA::KeyData keys;				// Client's keysets (if using encryption)
+		AsyncKeys *keyData;				// Client's keysets (if using encryption)
 		CryptoPP::RSAFunction pK;				// Remote host's public key (if using encryption)
 
 		NetClient(char*, char*, CryptoLevel, bool); // Underlying setup for regular constructors
 		NetClient(SOCKET, bool, CryptoLevel, bool);// Special setup constructor
-		NetClient(SOCKET, bool, Crypto::RSA::KeyData&, CryptoLevel = CryptoLevel::None, bool = false);// Create wrapper for existing socket
+		NetClient(SOCKET, bool, AsyncKeys&, CryptoLevel = CryptoLevel::None, bool = false);// Create wrapper for existing socket
 		void sharedSetup(bool);					// Setup function for all constructor
 		bool _write(char*, ulong_64b);			// Internal write function. Doesn't do any of the fancy auto encryption: just raw write...
 		bool writeBufferedPackets();			// Flushes and deletes buffer
@@ -85,9 +98,10 @@ namespace IO {
 		std::function<void()> onDestroy;		// Event handler called when NetClient object is destroyed
 	public:
 		bool autoPing = true;					// Whether or not client should actively check connection state
+		bool autoDelete = false;
 		time_t commTime;						// Latest time a transaction occurred
 		NetClient(char* ipAddr, char* port, CryptoLevel = CryptoLevel::None);// Standard constructor for creating connection
-		NetClient(char* ipAddr, char* port, Crypto::RSA::KeyData&, CryptoLevel);// Standard constructor for creating connection with predefined keys
+		NetClient(char* ipAddr, char* port, AsyncKeys*, CryptoLevel);// Standard constructor for creating connection with predefined keys
 		~NetClient();
 		bool close();
 		void closeWrite();
@@ -113,7 +127,7 @@ namespace IO {
 		friend class NetClient;
 	private:
 		CryptoLevel pref;
-		Crypto::RSA::KeyData keys;				// Server's keysets (if using encryption)
+		AsyncKeys *keyData;				// Server's keysets (if using encryption)
 		std::function<void()> onDestroy;
 		volatile bool _open;
 
@@ -126,7 +140,7 @@ namespace IO {
 	public:
 		std::function<bool(NetClient*)> timeoutHandler;
 		NetServer(char* port, std::function<bool(NetClient*)> = nullptr, CryptoLevel = CryptoLevel::None);
-		NetServer(char* port, std::function<bool(NetClient*)>, Crypto::RSA::KeyData&, CryptoLevel);
+		NetServer(char* port, std::function<bool(NetClient*)>, AsyncKeys&, CryptoLevel);
 		~NetServer();
 		bool isOpen();
 		CryptoLevel getCryptoPreference();

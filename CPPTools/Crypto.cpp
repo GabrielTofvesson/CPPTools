@@ -7,6 +7,21 @@
 
 
 namespace Crypto {
+	static unsigned long x = 123456789, y = 362436069, z = 521288629;
+
+	unsigned long xorshf96(void) {          //period 2^96-1
+		unsigned long t;
+		x ^= x << 16;
+		x ^= x >> 5;
+		x ^= x << 1;
+
+		t = x;
+		x = y;
+		y = z;
+		z = t ^ x ^ y;
+
+		return z;
+	}
 
 	namespace AES {
 		// -------- AES START --------
@@ -38,7 +53,7 @@ namespace Crypto {
 
 			(*resultingSize) = t;
 
-			char* cipher = (char*)malloc(t);
+			char* cipher = (char*)new char[t];
 			memcpy(cipher, ciphertext.c_str(), t);
 
 			return cipher;
@@ -61,11 +76,11 @@ namespace Crypto {
 
 			*resultSize = decryptedtext.size();
 
-			char* c = (char*)malloc(*resultSize);
+			char* c = (char*)new char[*resultSize];
 			//memset(c, 0, decryptedtext.size());
 			memcpy(c, decryptedtext.c_str(), decryptedtext.size());
 
-			decryptedtext.~basic_string();
+			//decryptedtext.~basic_string();
 
 			return c;
 		}
@@ -74,9 +89,15 @@ namespace Crypto {
 		Payload aes_auto_encrypt(void* msg, ulong_64b size) {
 			char* message = (char*)msg;
 			Payload p;
-			srand(time(NULL));
 
-			p.key = (char*)malloc(sizeof(AES_KEY));
+			// Generate random number 'n stuff
+			for (volatile unsigned int i = ((unsigned int)rand())%4096; i > 0; --i) xorshf96();
+			time_t t = (time_t) xorshf96();
+			if (sizeof(long) < sizeof(time_t)) t ^= xorshf96() << ((sizeof(time_t) / 2) + (sizeof(time_t)%2)); // Fill ALL the bits!
+			srand(time(NULL)+(signed long long)t);
+
+
+			p.key = (char*)new char[sizeof(AES_KEY)];
 			AES_KEY k = (AES_KEY)rand();
 
 			p.keySize = sizeof(AES_KEY);
@@ -143,8 +164,8 @@ namespace Crypto {
 
 	namespace RSA {
 		// -------- RSA START --------
-		KeyData rsa_gen_keys() {
-			KeyData k;
+		KeyData* rsa_gen_keys() {
+			KeyData* k = new KeyData();
 
 			CryptoPP::InvertibleRSAFunction params;
 			CryptoPP::RandomPool rng;
@@ -153,8 +174,8 @@ namespace Crypto {
 			rng.IncorporateEntropy((const byte*)&t, sizeof(t) * 8);
 
 			params.GenerateRandomWithKeySize(rng, 3072);
-			k.privKey = CryptoPP::RSA::PrivateKey(params);
-			k.publKey = CryptoPP::RSA::PublicKey(params);
+			k->privKey = CryptoPP::RSA::PrivateKey(params);
+			k->publKey = CryptoPP::RSA::PublicKey(params);
 			return k;
 		}
 
@@ -164,7 +185,7 @@ namespace Crypto {
 			//func.DEREncodePublicKey(queue);
 
 
-			byte* shortened = (byte*)malloc(*rSize=queue.TotalBytesRetrievable());
+			byte* shortened = (byte*)new byte[*rSize=queue.TotalBytesRetrievable()];
 			memset(shortened, 0, *rSize);
 
 			std::vector<byte> spk;
@@ -191,9 +212,10 @@ namespace Crypto {
 
 			*resultingSize = cipher.size();
 
-			char* c = (char*)malloc(cipher.size());
-			memset(c, 0, cipher.size());
+			char* c = (char*)new char[cipher.size()];
+			//memset(c, 0, cipher.size());
 			memcpy(c, cipher.c_str(), cipher.size());
+
 			return c;
 		}
 
@@ -210,9 +232,11 @@ namespace Crypto {
 
 			*resultingSize = clear.size();
 
-			char* c = (char*)malloc(clear.size());
-			memset(c, 0, clear.size());
+			char* c = (char*)new char[clear.size()];
+			//memset(c, 0, clear.size());
 			memcpy(c, clear.c_str(), clear.size());
+
+
 			return c;
 		}
 		// -------- RSA END --------
@@ -220,14 +244,21 @@ namespace Crypto {
 
 	char* full_auto_encrypt(void* msg, ulong_64b mSize, CryptoPP::RSA::PublicKey& pk, ulong_64b* rSize) {
 		AES::Payload p = AES::aes_auto_encrypt(msg, mSize);
-		p.key = RSA::rsa_encrypt(p.key, p.keySize, pk, &p.keySize);
+		char *c = RSA::rsa_encrypt(p.key, p.keySize, pk, &p.keySize);
+		delete[] p.key;
+		p.key = c;
 		return p.serialize(rSize);
 	}
 
 	char* full_auto_decrypt(void* msg, CryptoPP::RSA::PrivateKey& pk, ulong_64b* rSize) {
 		ulong_64b size;
 		AES::Payload p = AES::deserializePayload(msg, &size);
-		p.key = RSA::rsa_decrypt(p.key, p.keySize, pk, &p.keySize);
-		return AES::aes_auto_decrypt(p, rSize);
+		char *c = RSA::rsa_decrypt(p.key, p.keySize, pk, &p.keySize);
+		delete[] p.key;
+		p.key = c;
+		c = AES::aes_auto_decrypt(p, rSize);
+		delete[] p.key;
+		delete[] p.ldPayload;
+		return c;
 	}
 }

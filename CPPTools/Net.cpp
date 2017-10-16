@@ -1,6 +1,7 @@
 #include "Net.h"
 #include "Support.h"
 
+#include <future>
 #include <stdlib.h>
 #include <stdio.h>
 #include <time.h>
@@ -9,6 +10,26 @@
 
 
 namespace IO {
+
+	AsyncKeys::AsyncKeys() {
+		gen = std::async(std::launch::async, [this]() {
+			Crypto::RSA::KeyData *data = Crypto::RSA::rsa_gen_keys();
+			done = true;
+			return data;
+		});
+		done = suppressDelete = false;
+	}
+	AsyncKeys::AsyncKeys(Crypto::RSA::KeyData* predef) {
+		done = suppressDelete = true;
+		keys = predef;
+	}
+	AsyncKeys::~AsyncKeys() { if (!suppressDelete) delete keys; }
+	Crypto::RSA::KeyData* AsyncKeys::get() {
+		if (!done) keys = gen.get();
+		return keys;
+	}
+
+
 	bool cryptoLevelsAreCompatible(CryptoLevel l1, CryptoLevel l2) {
 		return !(((l1 == CryptoLevel::None) && (l2 == CryptoLevel::Force)) || ((l2 == CryptoLevel::None) && (l1 == CryptoLevel::Force)));
 	}
@@ -45,7 +66,7 @@ namespace IO {
 
 
 	void NetClient::sharedSetup(bool setupKeys) {
-		if (setupKeys && (preferEncrypted != CryptoLevel::None)) keys = Crypto::RSA::rsa_gen_keys();
+		if (setupKeys && (preferEncrypted != CryptoLevel::None)) keyData = new AsyncKeys();
 		packets = new std::vector<Packet>();
 		sparse = new std::vector<char>();
 		outPacketBuf = new std::vector<Packet>();
@@ -106,17 +127,26 @@ namespace IO {
 		sharedSetup(setupKeys);
 	}
 
-	NetClient::NetClient(char* ipAddr, char* port, Crypto::RSA::KeyData& keys, CryptoLevel level) : NetClient(ipAddr, port, level, false) { this->keys = keys; }
+	NetClient::NetClient(char* ipAddr, char* port, AsyncKeys *keyData, CryptoLevel level) : NetClient(ipAddr, port, level, false) { this->keyData = keyData; }
 
-	NetClient::NetClient(SOCKET wrap, bool noThread, Crypto::RSA::KeyData& keys, CryptoLevel preferEncrypted, bool startNegotiate) :
+	NetClient::NetClient(SOCKET wrap, bool noThread, AsyncKeys &keyData, CryptoLevel preferEncrypted, bool startNegotiate) :
 		preferEncrypted(preferEncrypted), startNegotiate(startNegotiate)
 	{
 		_socket = wrap;
 		this->noThread = noThread;
-		sharedSetup(true);
+		this->keyData = new AsyncKeys(keyData.get());
+		sharedSetup(false);
 	}
 
 	NetClient::~NetClient() {
+		delete keyData;
+		for (std::pair<char*, std::pair<ulong_64b, char*>*> *p : associatedData) {
+			delete[] p->first;
+			delete[] p->second->second;
+			delete p->second;
+			delete p;
+		}
+		associatedData.clear();
 		packets->clear();
 		delete packets;
 		sparse->clear();
@@ -144,6 +174,7 @@ namespace IO {
 			else if (i == 0) --wIdx;
 		}
 		commTime = time(nullptr);
+		delete[] c;
 		return true;
 	}
 
@@ -155,14 +186,24 @@ namespace IO {
 		char* c = new char[sizeof(ulong_64b)];
 		memcpy(c, &size, sizeof(ulong_64b));
 		for (ulong_64b wIdx = 0; wIdx < sizeof(ulong_64b); ++wIdx) {
-			if ((i = send(_socket, c + wIdx, 1, 0)) == SOCKET_ERROR) return false;
+			if ((i = send(_socket, c + wIdx, 1, 0)) == SOCKET_ERROR) {
+				delete[] message;
+				delete[] c;
+				return false;
+			}
 			else if (i == 0) --wIdx;
 		}
 		for (ulong_64b wIdx = 0; wIdx < size; ++wIdx) {
-			if ((i = send(_socket, message + wIdx, 1, 0)) == SOCKET_ERROR) return false;
+			if ((i = send(_socket, message + wIdx, 1, 0)) == SOCKET_ERROR) {
+				delete[] message;
+				delete[] c;
+				return false;
+			}
 			else if (i == 0) --wIdx;
 		}
 		commTime = time(nullptr);
+		if(autoDelete) delete[] message;
+		delete[] c;
 		return true;
 	}
 	bool NetClient::write(void* message, ulong_64b size) {
@@ -234,7 +275,7 @@ namespace IO {
 			delete[] size;
 
 			p.message = readSparse(sparse, p.size);
-			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, keys.privKey, &p.size);
+			if (encrypted) p.message = Crypto::full_auto_decrypt(p.message, keyData->get()->privKey, &p.size);
 
 			p.packetUID = p.message[0];
 			if (p.packetUID != expectedNextPUID) continue; // Detect packet replay/mismatch
@@ -267,7 +308,7 @@ namespace IO {
 						}
 						else {
 							ulong_64b size;
-							char* c = Crypto::RSA::serializeKey(keys.publKey, &size);
+							char* c = Crypto::RSA::serializeKey(keyData->get()->publKey, &size);
 							_write(c, size); // This shouldn't be encrypted
 							delete[] c;
 						}
@@ -428,7 +469,7 @@ namespace IO {
 						if (_open) throw new std::exception();
 						else break;
 					}
-					NetClient* cli = new NetClient(client, true, keys, this->pref, false);
+					NetClient* cli = new NetClient(client, true, *keyData, this->pref, false);
 					clients->push_back(cli);
 					for (ulong_64b t = 0; t < handlers->size(); ++t)
 						if (handlers->at(t)(cli))
@@ -455,21 +496,23 @@ namespace IO {
 	}
 
 	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f, CryptoLevel pref) : pref(pref) {
-		if (pref != CryptoLevel::None) keys = Crypto::RSA::rsa_gen_keys();
+		if (pref != CryptoLevel::None) keyData = new AsyncKeys();
 		sharedSetup(port, f);
 	}
 
 
-	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f, Crypto::RSA::KeyData& keys, CryptoLevel level) : pref(level) {
-		this->keys = keys;
+	NetServer::NetServer(char* port, std::function<bool(NetClient*)> f, AsyncKeys &keyData, CryptoLevel level) : pref(level) {
+		this->keyData = new AsyncKeys(keyData.get());
 		sharedSetup(port, f);
 	}
 
 	NetServer::~NetServer() {
+		delete keyData;
 		if (_open) close();
 		handlers->clear();
 		delete handlers;
-		clients->clear();
+		for (NetClient *cli : *clients) delete cli;
+ 		clients->clear();
 		delete clients;
 		onDestroy();
 	}
